@@ -12,6 +12,30 @@
 </a>
 </div>
 
+# 4.8
+
+up to date route
+
+fixed errors not showing on frontend
+
+> **Hotfix 1**
+
+reverted route
+
+limited external models shown to website ones
+
+> **Hotfix 2**
+
+fixed "streaming off" not being detected
+
+fixed more errors not showing on frontend
+
+> **Hotfix 3**
+
+fixed some names not using spaces properly
+
+fixed endpoint
+
 # 4.7
 
 added multiple model options in case you subscribe to their plans. some based on their docs, some on rumors. stick to 2.1 if you're a free user
