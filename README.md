@@ -125,5 +125,3 @@ Clewd修改版及教程禁止转发任何包含收费项目的群组/论坛或�
 > **RenewAlways**: false
 
 > **AllSamples**: true
-
-> **StripAssistant**: true (add prefill to jailbreak in this case)
