@@ -7,7 +7,7 @@
 const {createServer: Server, IncomingMessage, ServerResponse} = require('node:http'), {createHash: Hash, randomUUID, randomInt, randomBytes} = require('node:crypto'), {TransformStream, ReadableStream} = require('node:stream/web'), {Readable, Writable} = require('node:stream'), {Blob} = require('node:buffer'), {existsSync: exists, writeFileSync: write, createWriteStream} = require('node:fs'), {join: joinP} = require('node:path'), {ClewdSuperfetch: Superfetch, SuperfetchAvailable} = require('./lib/clewd-superfetch'), {AI, fileName, genericFixes, bytesToSize, setTitle, checkResErr, Replacements, Main} = require('./lib/clewd-utils'), ClewdStream = require('./lib/clewd-stream');
 
 /******************************************************* */
-let currentIndex, Firstlogin = true, changeflag = 0, changing, changetime = 0, totaltime, uuidOrgArray = [], model, cookieModel, tokens, apiKey, timestamp, regexLog, isPro, oaiModel = [];
+let currentIndex, Firstlogin = true, changeflag = 0, changing, changetime = 0, totaltime, uuidOrgArray = [], model, cookieModel, tokens, apiKey, timestamp, regexLog, isPro, modelList = [];
 
 const url = require('url');
 const asyncPool = async (poolLimit, array, iteratorFn) => {
@@ -19,7 +19,7 @@ const asyncPool = async (poolLimit, array, iteratorFn) => {
             const e = p.then(() => executing.splice(executing.indexOf(e), 1));
             executing.push(e);
             if (executing.length >= poolLimit) await Promise.race(executing);
-      }
+        }
     }
     return Promise.all(ret);
 }, convertToType = value => {
@@ -154,6 +154,7 @@ let uuidOrg, curPrompt = {}, prevPrompt = {}, prevMessages = [], prevImpersonate
     Cookie: '',
     CookieArray: [],
     WastedCookie: [],
+    unknownModels: [],
     Cookiecounter: 3,
     CookieIndex: 0,
     ProxyPassword: '',
@@ -187,7 +188,7 @@ let uuidOrg, curPrompt = {}, prevPrompt = {}, prevMessages = [], prevImpersonate
         FullColon: true,
         padtxt: "1000,1000,15000",
         xmlPlot: true,
-        SkipRestricted: true,
+        SkipRestricted: false,
         Superfetch: true
     }
 };
@@ -288,8 +289,9 @@ const updateParams = res => {
     const bootAccInfo = bootstrap.account.memberships.find(item => item.organization.capabilities.includes('chat')).organization;
     cookieModel = bootstrap.statsig.values.layer_configs["HPOHwBLNLQLxkj5Yn4bfSkgCQnBX28kPR7h/BNKdVLw="]?.value?.console_default_model_override?.model || bootstrap.statsig.values.dynamic_configs["6zA9wvTedwkzjLxWy9PVe7yydI00XDQ6L5Fejjq/2o8="]?.value?.model;
     isPro = bootAccInfo.capabilities.includes('claude_pro');
-    if (Config.CookieArray?.length > 0 && (isPro ? 'claude_pro' : cookieModel) != Config.CookieArray[currentIndex].split('@')[0]) {
+    if (Config.CookieArray?.length > 0 && (isPro ? 'claude_pro' : cookieModel) != Config.CookieArray[currentIndex].split('@')[0] || !AI.mdl().includes(cookieModel)) {
         Config.CookieArray[currentIndex] = (isPro ? 'claude_pro' : cookieModel) + '@' + Config.Cookie;
+        !AI.mdl().includes(cookieModel) && Config.unknownModels.push(cookieModel);
         writeSettings(Config);
     }
     if (!isPro && model && model != cookieModel) return CookieChanger();
@@ -406,17 +408,16 @@ const updateParams = res => {
                         headers: { authorization: req.headers.authorization.match(/(?<=oaiKey:).*/)?.[0].split(',')[0].trim() }
                     });
                     models = await modelsRes.json();
-                    oaiModel.splice(0);
                 } catch(err) {}
             }
             res.json({
                 data: [
-                    ...AI.mdl().map((name => ({ id: name }))), {
-                        id: 'claude-default'
-                }].concat(models?.data).reduce((acc, current) => {
-                    if (current?.id && !acc.some(model => model.id === current.id)) {
+                    ...AI.mdl().concat(Config.unknownModels).map((name => ({ id: name })))
+                ].concat(models?.data).reduce((acc, current, index) => {
+                    index === 0 && modelList.splice(0);
+                    if (current?.id && acc.every(model => model.id != current.id)) {
                         acc.push(current);
-                        oaiModel.push(current);
+                        modelList.push(current.id);
                     }
                     return acc;
                 }, [])
@@ -445,12 +446,12 @@ const updateParams = res => {
                     temperature = typeof temperature === 'number' ? Math.max(.1, Math.min(1, temperature)) : undefined; //temperature = Math.max(.1, Math.min(1, temperature));
                     let {messages} = body;
 /************************* */
-                    const thirdKey = req.headers.authorization?.match(/(?<=(3rd|oai)Key:).*/), oaiAPI = /oaiKey:/.test(req.headers.authorization);
+                    const thirdKey = req.headers.authorization?.match(/(?<=(3rd|oai)Key:).*/), oaiAPI = /oaiKey:/.test(req.headers.authorization), forceModel = /--force/.test(body.model);
                     apiKey = thirdKey?.[0].split(',').map(item => item.trim()) || req.headers.authorization?.match(/sk-ant-api\d\d-[\w-]{86}-[\w-]{6}AA/g);
-                    model = apiKey || /claude-(?!default)/.test(body.model) || isPro ? body.model.replace(/--force/, '').trim() : cookieModel;
+                    model = apiKey || forceModel || isPro ? body.model.replace(/--force/, '').trim() : cookieModel;
                     let max_tokens_to_sample = body.max_tokens, stop_sequences = body.stop, top_p = typeof body.top_p === 'number' ? body.top_p : undefined, top_k = typeof body.top_k === 'number' ? body.top_k : undefined;
                     if (!apiKey && (Config.ProxyPassword != '' && req.headers.authorization != 'Bearer ' + Config.ProxyPassword || !uuidOrg)) {
-                        throw Error(uuidOrg ? 'ProxyPassword Wrong' : 'No cookie available or apiKey Format Wrong');
+                        throw Error(uuidOrg ? 'ProxyPassword Wrong' : 'No cookie available or apiKey format wrong');
                     } else if (!changing && !apiKey && (!isPro && model != cookieModel)) CookieChanger();
                     await waitForChange();
 /************************* */
@@ -485,7 +486,7 @@ const updateParams = res => {
                         throw Error('Only one can be used at the same time: AllSamples/NoSamples');
                     }
                     //const model = body.model;//if (model === AI.mdl()[0]) {//    return;//}
-                    if (!AI.mdl().concat(oaiModel).includes(model) || !/claude-.*/.test(model) && !/--force/.test(body.model)) {
+                    if (!modelList.includes(model) && !/claude-.*/.test(model) && !forceModel) {
                         throw Error('Invalid model selected: ' + model);
                     }
                     curPrompt = {
@@ -753,7 +754,8 @@ const updateParams = res => {
                         const body = {
                             attachments,
                             files: [],
-                            model,
+                            model: isPro || forceModel ? model : undefined,
+                            rendering_mode: 'raw',
                             ...Config.Settings.PassParams && {
                                 max_tokens_to_sample, //
                                 stop_sequences, //
@@ -821,6 +823,10 @@ const updateParams = res => {
                     exceeded_limit = clewdStream.error.exceeded_limit; //
                     clewdStream.error.status < 200 || clewdStream.error.status >= 300 || clewdStream.error.message === 'Overloaded' && (nochange = true); //
                     setTitle('ok ' + bytesToSize(clewdStream.size));
+                    if (!AI.mdl().includes(clewdStream.compModel) && !apiKey) {
+                        Config.unknownModels.push(clewdStream.compModel);
+                        writeSettings(Config);
+                    }
                     console.log(`${200 == fetchAPI.status ? '[32m' : '[33m'}${fetchAPI.status}![0m\n`);
                     clewdStream.empty();
                 }
@@ -902,6 +908,7 @@ const updateParams = res => {
     }
     Config.rProxy = Config.rProxy.replace(/\/$/, '');
     Config.CookieArray = [...new Set([Config.CookieArray].join(',').match(/(claude[-_][a-z0-9-_]*?@)?(sessionKey=)?sk-ant-sid01-[\w-]{86}-[\w-]{6}AA/g))];
+    Config.unknownModels = Config.unknownModels.reduce((prev, cur) => AI.mdl().includes(cur) ? prev : [...prev, cur], []);
     writeSettings(Config);
     currentIndex = Config.CookieIndex > 0 ? Config.CookieIndex - 1 : Config.Cookiecounter >= 0 ? Math.floor(Math.random() * Config.CookieArray.length) : 0;
 /***************************** */
