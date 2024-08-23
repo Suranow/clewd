@@ -4,7 +4,7 @@
 */
 'use strict';
 
-const {createServer: Server, IncomingMessage, ServerResponse} = require('node:http'), {createHash: Hash, randomUUID, randomInt, randomBytes} = require('node:crypto'), {TransformStream, ReadableStream} = require('node:stream/web'), {Readable, Writable} = require('node:stream'), {Blob} = require('node:buffer'), {existsSync: exists, writeFileSync: write, createWriteStream} = require('node:fs'), {join: joinP} = require('node:path'), {ClewdSuperfetch: Superfetch, SuperfetchAvailable} = require('./lib/clewd-superfetch'), {AI, fileName, genericFixes, bytesToSize, setTitle, checkResErr, Replacements, Main} = require('./lib/clewd-utils'), ClewdStream = require('./lib/clewd-stream');
+const {createServer: Server, IncomingMessage, ServerResponse} = require('node:http'), {createHash: Hash, randomUUID, randomInt, randomBytes} = require('node:crypto'), {TransformStream, ReadableStream} = require('node:stream/web'), {Readable, Writable} = require('node:stream'), {Blob} = require('node:buffer'), {existsSync: exists, writeFileSync: write, createWriteStream} = require('node:fs'), {join: joinP} = require('node:path'), {ClewdSuperfetch: Superfetch, SuperfetchAvailable, SuperfetchFoldersMk, SuperfetchFoldersRm} = require('./lib/clewd-superfetch'), {AI, fileName, genericFixes, bytesToSize, setTitle, checkResErr, Replacements, Main} = require('./lib/clewd-utils'), ClewdStream = require('./lib/clewd-stream');
 
 /******************************************************* */
 let currentIndex, Firstlogin = true, changeflag = 0, changing, changetime = 0, totaltime, uuidOrgArray = [], model, cookieModel, tokens, apiKey, timestamp, regexLog, isPro, modelList = [];
@@ -189,6 +189,7 @@ let uuidOrg, curPrompt = {}, prevPrompt = {}, prevMessages = [], prevImpersonate
         padtxt: "1000,1000,15000",
         xmlPlot: true,
         SkipRestricted: false,
+        Artifacts: false,
         Superfetch: true
     }
 };
@@ -247,7 +248,10 @@ const updateParams = res => {
     if (Firstlogin) {
         Firstlogin = false, timestamp = Date.now(), totaltime = Config.CookieArray.length;
         console.log(`[2m${Main}[0m\n[33mhttp://${Config.Ip}:${Config.Port}/v1[0m\n\n${Object.keys(Config.Settings).map((setting => UnknownSettings?.includes(setting) ? `??? [31m${setting}: ${Config.Settings[setting]}[0m` : `[1m${setting}:[0m ${ChangedSettings?.includes(setting) ? '[33m' : '[36m'}${Config.Settings[setting]}[0m`)).sort().join('\n')}\n`); //↓
-        Config.Settings.Superfetch && SuperfetchAvailable(true); //↓
+        if (Config.Settings.Superfetch) {
+            SuperfetchAvailable(true);
+            SuperfetchFoldersMk();
+        }
         if (Config.localtunnel) {
             const localtunnel = require('localtunnel');
             localtunnel({ port: Config.Port }).then((tunnel) => {
@@ -259,7 +263,7 @@ const updateParams = res => {
         const cookieInfo = /(?:(claude[-_][a-z0-9-_]*?)@)?(?:sessionKey=)?(sk-ant-sid01-[\w-]{86}-[\w-]{6}AA)/.exec(Config.CookieArray[currentIndex]);
         cookieInfo?.[2] && (Config.Cookie = 'sessionKey=' + cookieInfo[2]);
         changetime++;
-        if (model && cookieInfo?.[1] && cookieInfo?.[1] != 'claude_pro' && cookieInfo?.[1] != model) return CookieChanger(false);
+        if (model && cookieInfo?.[1] && !/claude[\w]*?_pro/.test(cookieInfo?.[1]) && cookieInfo?.[1] != model) return CookieChanger(false);
     }
     let percentage = ((changetime + Math.max(Config.CookieIndex - 1, 0)) / totaltime) * 100
     if (Config.Cookiecounter < 0 && percentage > 100) {
@@ -288,10 +292,11 @@ const updateParams = res => {
     }
     const bootAccInfo = bootstrap.account.memberships.find(item => item.organization.capabilities.includes('chat')).organization;
     cookieModel = bootstrap.statsig.values.layer_configs["HPOHwBLNLQLxkj5Yn4bfSkgCQnBX28kPR7h/BNKdVLw="]?.value?.console_default_model_override?.model || bootstrap.statsig.values.dynamic_configs["6zA9wvTedwkzjLxWy9PVe7yydI00XDQ6L5Fejjq/2o8="]?.value?.model;
-    isPro = bootAccInfo.capabilities.includes('claude_pro');
-    if (Config.CookieArray?.length > 0 && (isPro ? 'claude_pro' : cookieModel) != Config.CookieArray[currentIndex].split('@')[0] || !AI.mdl().includes(cookieModel)) {
-        Config.CookieArray[currentIndex] = (isPro ? 'claude_pro' : cookieModel) + '@' + Config.Cookie;
-        !AI.mdl().includes(cookieModel) && Config.unknownModels.push(cookieModel);
+    isPro = bootAccInfo.capabilities.includes('claude_pro') && 'claude_pro' || bootAccInfo.capabilities.includes('raven') && 'claude_team_pro';
+    const unknown = cookieModel && !(AI.mdl().includes(cookieModel) || Config.unknownModels.includes(cookieModel));
+    if (Config.CookieArray?.length > 0 && (isPro || cookieModel) != Config.CookieArray[currentIndex].split('@')[0] || unknown) {
+        Config.CookieArray[currentIndex] = (isPro || cookieModel) + '@' + Config.Cookie;
+        unknown && Config.unknownModels.push(cookieModel);
         writeSettings(Config);
     }
     if (!isPro && model && model != cookieModel) return CookieChanger();
@@ -356,7 +361,19 @@ const updateParams = res => {
         if (banned) return CookieCleaner('Banned') //
         else if (Config.Settings.SkipRestricted) return CookieChanger(); //
     }
-    changing = false; //
+    if (bootstrap.account.settings.preview_feature_uses_artifacts != Config.Settings.Artifacts) {
+        const settingsRes = await (Config.Settings.Superfetch ? Superfetch : fetch)((Config.rProxy || AI.end()) + `/api/account`, {
+            method: 'PUT',
+            headers: {
+                ...AI.hdr(),
+                Cookie: getCookies()
+            },
+            body: JSON.stringify({ settings: Object.assign(bootstrap.account.settings, { preview_feature_uses_artifacts: Config.Settings.Artifacts }) }),
+        });
+        await checkResErr(settingsRes);
+        updateParams(settingsRes);
+    }
+    changing = false;
     const convRes = await (Config.Settings.Superfetch ? Superfetch : fetch)(`${Config.rProxy || AI.end()}/api/organizations/${accInfo.uuid}/chat_conversations`, { //const convRes = await fetch(`${Config.rProxy || AI.end()}/api/organizations/${uuidOrg}/chat_conversations`, {
         method: 'GET',
         headers: {
@@ -518,14 +535,12 @@ const updateParams = res => {
                         fetchAPI = await (async (signal, model) => {
                             let res;
                             const body = {
-                                completion: {
-                                    prompt: '',
-                                    timezone: AI.zone(),
-                                    model
-                                },
-                                organization_uuid: uuidOrg,
-                                conversation_uuid: Conversation.uuid,
-                                text: ''
+                                prompt: '',
+                                parent_message_uuid: '',
+                                timezone: AI.zone(),
+                                attachments: [],
+                            	files: [],
+                                rendering_mode: 'raw'
                             };
                             let headers = {
                                 ...AI.hdr(Conversation.uuid || ''),
@@ -536,7 +551,7 @@ const updateParams = res => {
                                 const names = Object.keys(headers), values = Object.values(headers);
                                 headers = names.map(((header, idx) => `${header}: ${values[idx]}`));
                             }
-                            res = await (Config.Settings.Superfetch ? Superfetch : fetch)((Config.rProxy || AI.end()) + '/api/retry_message', {
+                            res = await (Config.Settings.Superfetch ? Superfetch : fetch)((Config.rProxy || AI.end()) + `/api/organizations/${uuidOrg || ''}/chat_conversations/${Conversation.uuid || ''}/retry_completion`, {
                                 stream: true,
                                 signal,
                                 method: 'POST',
@@ -676,7 +691,7 @@ const updateParams = res => {
                         };
                     })(messages, type);
 /******************************** */
-                    const legacy = /claude-([12]|instant)/i.test(model), messagesAPI = oaiAPI || !legacy && !/<\|completeAPI\|>/.test(prompt) || /<\|messagesAPI\|>/.test(prompt), messagesLog = /<\|messagesLog\|>/.test(prompt), fusion = apiKey && messagesAPI && /<\|Fusion Mode\|>/.test(prompt), wedge = '\r';
+                    const legacy = /claude-([12]|instant)/i.test(model), messagesAPI = thirdKey || !legacy && !/<\|completeAPI\|>/.test(prompt) || /<\|messagesAPI\|>/.test(prompt), messagesLog = /<\|messagesLog\|>/.test(prompt), fusion = apiKey && messagesAPI && /<\|Fusion Mode\|>/.test(prompt), wedge = '\r';
                     const stopSet = /<\|stopSet *(\[.*?\]) *\|>/.exec(prompt)?.[1], stopRevoke = /<\|stopRevoke *(\[.*?\]) *\|>/.exec(prompt)?.[1];
                     if (stop_sequences || stopSet || stopRevoke) stop_sequences = JSON.parse(stopSet || '[]').concat(stop_sequences).concat(['\n\nHuman:', '\n\nAssistant:']).filter(item => !JSON.parse(stopRevoke || '[]').includes(item) && item);
                     apiKey && (type = oaiAPI ? 'oai_api' : messagesAPI ? 'msg_api' : type);
@@ -710,11 +725,11 @@ const updateParams = res => {
                                 method: 'POST',
                                 signal,
                                 headers: {
-                                    'User-Agent': 'PostmanRuntime/7.38.0',
+                                    'anthropic-version': '2023-06-01',
                                     'authorization': 'Bearer ' + key,
                                     'Content-Type': 'application/json',
+                                    'User-Agent': AI.agent(),
                                     'x-api-key': key,
-                                    'anthropic-version': '2023-06-01'
                                 },
                                 body: JSON.stringify({
                                     ...oaiAPI || messagesAPI ? {
@@ -758,7 +773,7 @@ const updateParams = res => {
                             rendering_mode: 'raw',
                             ...Config.Settings.PassParams && {
                                 max_tokens_to_sample, //
-                                stop_sequences, //
+                                //stop_sequences, //
                                 top_k, //
                                 top_p, //
                                 temperature
@@ -823,7 +838,7 @@ const updateParams = res => {
                     exceeded_limit = clewdStream.error.exceeded_limit; //
                     clewdStream.error.status < 200 || clewdStream.error.status >= 300 || clewdStream.error.message === 'Overloaded' && (nochange = true); //
                     setTitle('ok ' + bytesToSize(clewdStream.size));
-                    if (!AI.mdl().includes(clewdStream.compModel) && !apiKey) {
+                    if (clewdStream.compModel && !(AI.mdl().includes(clewdStream.compModel) || Config.unknownModels.includes(clewdStream.compModel)) && !apiKey) {
                         Config.unknownModels.push(clewdStream.compModel);
                         writeSettings(Config);
                     }
@@ -908,7 +923,7 @@ const updateParams = res => {
     }
     Config.rProxy = Config.rProxy.replace(/\/$/, '');
     Config.CookieArray = [...new Set([Config.CookieArray].join(',').match(/(claude[-_][a-z0-9-_]*?@)?(sessionKey=)?sk-ant-sid01-[\w-]{86}-[\w-]{6}AA/g))];
-    Config.unknownModels = Config.unknownModels.reduce((prev, cur) => AI.mdl().includes(cur) ? prev : [...prev, cur], []);
+    Config.unknownModels = Config.unknownModels.reduce((prev, cur) => !cur || prev.includes(cur) || AI.mdl().includes(cur) ? prev : [...prev, cur], []);
     writeSettings(Config);
     currentIndex = Config.CookieIndex > 0 ? Config.CookieIndex - 1 : Config.Cookiecounter >= 0 ? Math.floor(Math.random() * Config.CookieArray.length) : 0;
 /***************************** */
@@ -922,6 +937,7 @@ const cleanup = async () => {
     console.log('cleaning...');
     try {
         await deleteChat(Conversation.uuid);
+        SuperfetchFoldersRm();
         Logger?.close();
     } catch (err) {}
     process.exit();
